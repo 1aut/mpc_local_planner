@@ -46,7 +46,7 @@ MpcLocalPlannerROS::MpcLocalPlannerROS()
       _tf(nullptr),
       _costmap_model(nullptr),
       _costmap_converter_loader("costmap_converter", "costmap_converter::BaseCostmapToPolygons"),
-      /*dynamic_recfg_(NULL),*/
+      dynamic_recfg_(NULL),
       _goal_reached(false),
       _no_infeasible_plans(0),
       /*last_preferred_rotdir_(RotType::none),*/
@@ -56,12 +56,17 @@ MpcLocalPlannerROS::MpcLocalPlannerROS()
 
 MpcLocalPlannerROS::~MpcLocalPlannerROS() {}
 
-/*
-void MpcLocalPlannerROS::reconfigureCB(TebLocalPlannerReconfigureConfig& config, uint32_t level)
+
+void MpcLocalPlannerROS::reconfigureCB(MpcLocalPlannerReconfigureConfig& config, uint32_t level)
 {
-  cfg_.reconfigure(config);
+  _cfg.reconfigure(config);
+  
+  if (!_controller.configure(nh, _obstacles, _robot_model, _via_points, _cfg))
+  {
+    ROS_ERROR("Controller configuration failed.");
+  }
 }
-*/
+
 
 void MpcLocalPlannerROS::initialize(std::string name, tf2_ros::Buffer* tf, costmap_2d::Costmap2DROS* costmap_ros)
 {
@@ -69,28 +74,43 @@ void MpcLocalPlannerROS::initialize(std::string name, tf2_ros::Buffer* tf, costm
     if (!_initialized)
     {
         // create Node Handle with name of plugin (as used in move_base for loading)
-        ros::NodeHandle nh("~/" + name);
+        //ros::NodeHandle nh("~/" + name);
+        nh = ros::NodeHandle("~/" + name);
+
+        _cfg.loadRosParamFromNodeHandle(nh);
 
         // load plugin related main parameters
-        nh.param("controller/xy_goal_tolerance", _params.xy_goal_tolerance, _params.xy_goal_tolerance);
-        nh.param("controller/yaw_goal_tolerance", _params.yaw_goal_tolerance, _params.yaw_goal_tolerance);
-        nh.param("controller/global_plan_overwrite_orientation", _params.global_plan_overwrite_orientation,
-                 _params.global_plan_overwrite_orientation);
-        nh.param("controller/global_plan_prune_distance", _params.global_plan_prune_distance, _params.global_plan_prune_distance);
-        nh.param("controller/max_global_plan_lookahead_dist", _params.max_global_plan_lookahead_dist, _params.max_global_plan_lookahead_dist);
-        nh.param("controller/global_plan_viapoint_sep", _params.global_plan_viapoint_sep, _params.global_plan_viapoint_sep);
+        //nh.param("controller/xy_goal_tolerance", _params.xy_goal_tolerance, _params.xy_goal_tolerance);
+        _params.xy_goal_tolerance = _cfg.controller.xy_goal_tolerance;
+        //nh.param("controller/yaw_goal_tolerance", _params.yaw_goal_tolerance, _params.yaw_goal_tolerance);
+        _params.yaw_goal_tolerance = _cfg.controller.yaw_goal_tolerance;
+        //nh.param("controller/global_plan_overwrite_orientation", _params.global_plan_overwrite_orientation,
+        //         _params.global_plan_overwrite_orientation);
+        _params.global_plan_prune_distance = _cfg.controller.global_plan_prune_distance;
+        _params.global_plan_overwrite_orientation = _cfg.controller.global_plan_overwrite_orientation;
+        //nh.param("controller/global_plan_prune_distance", _params.global_plan_prune_distance, _params.global_plan_prune_distance);
+        //nh.param("controller/max_global_plan_lookahead_dist", _params.max_global_plan_lookahead_dist, _params.max_global_plan_lookahead_dist);
+        _params.max_global_plan_lookahead_dist = _cfg.controller.max_global_plan_lookahead_dist;
+        //nh.param("controller/global_plan_viapoint_sep", _params.global_plan_viapoint_sep, _params.global_plan_viapoint_sep);
+        _params.global_plan_viapoint_sep = _cfg.controller.global_plan_viapoint_sep;
         _controller.setInitialPlanEstimateOrientation(_params.global_plan_overwrite_orientation);
 
         // special parameters
-        nh.param("odom_topic", _params.odom_topic, _params.odom_topic);
-        nh.param("footprint_model/is_footprint_dynamic", _params.is_footprint_dynamic, _params.is_footprint_dynamic);
-        nh.param("collision_avoidance/include_costmap_obstacles", _params.include_costmap_obstacles, _params.include_costmap_obstacles);
-        nh.param("collision_avoidance/costmap_obstacles_behind_robot_dist", _params.costmap_obstacles_behind_robot_dist,
-                 _params.costmap_obstacles_behind_robot_dist);
+        //nh.param("odom_topic", _params.odom_topic, _params.odom_topic);
+        _params.odom_topic = _cfg.odom_topic;
+        //nh.param("footprint_model/is_footprint_dynamic", _params.is_footprint_dynamic, _params.is_footprint_dynamic);
+        _params.is_footprint_dynamic = _cfg.footprint_model.is_footprint_dynamic;
+        //nh.param("collision_avoidance/include_costmap_obstacles", _params.include_costmap_obstacles, _params.include_costmap_obstacles);
+        _params.include_costmap_obstacles = _cfg.collision_avoidance.include_costmap_obstacles;
+        //nh.param("collision_avoidance/costmap_obstacles_behind_robot_dist", _params.costmap_obstacles_behind_robot_dist,
+        //         _params.costmap_obstacles_behind_robot_dist);
+        _params.costmap_obstacles_behind_robot_dist = _cfg.collision_avoidance.costmap_obstacles_behind_robot_dist;
 
         nh.param("collision_avoidance/collision_check_no_poses", _params.collision_check_no_poses, _params.collision_check_no_poses);
+        //_params.collision_check_no_poses = _cfg.collision_avoidance.collision_check_no_poses;
         nh.param("collision_avoidance/collision_check_min_resolution_angular", _params.collision_check_min_resolution_angular,
                  _params.collision_check_min_resolution_angular);
+        //_params.collision_check_min_resolution_angular = _cfg.collision_avoidance.collision_check_min_resolution_angular;
 
         // costmap converter plugin related parameters
         nh.param("costmap_converter_plugin", _costmap_conv_params.costmap_converter_plugin, _costmap_conv_params.costmap_converter_plugin);
@@ -115,7 +135,7 @@ void MpcLocalPlannerROS::initialize(std::string name, tf2_ros::Buffer* tf, costm
         _robot_model = getRobotFootprintFromParamServer(nh, _costmap_ros);
 
         // create the planner instance
-        if (!_controller.configure(nh, _obstacles, _robot_model, _via_points))
+        if (!_controller.configure(nh, _obstacles, _robot_model, _via_points, _cfg))
         {
             ROS_ERROR("Controller configuration failed.");
             return;
@@ -161,13 +181,11 @@ void MpcLocalPlannerROS::initialize(std::string name, tf2_ros::Buffer* tf, costm
         _odom_helper.setOdomTopic(_params.odom_topic);
 
         // setup dynamic reconfigure
-        /*
         dynamic_recfg_ = boost::make_shared<dynamic_reconfigure::Server<MpcLocalPlannerReconfigureConfig>>(nh);
         dynamic_reconfigure::Server<MpcLocalPlannerReconfigureConfig>::CallbackType cb =
-            boost::bind(&MpcLocalPlanner::reconfigureCB, this, _1, _2);
+            boost::bind(&MpcLocalPlannerROS::reconfigureCB, this, _1, _2);
         dynamic_recfg_->setCallback(cb);
-        */
-
+        
         // validate optimization footprint and costmap footprint
         validateFootprints(_robot_model->getInscribedRadius(), _robot_inscribed_radius, _controller.getInequalityConstraint()->getMinimumDistance());
 
@@ -333,7 +351,7 @@ uint32_t MpcLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
 
     // Do not allow config changes during the following optimization step
     // TODO(roesmann): we need something similar in case we allow dynamic reconfiguration:
-    // boost::mutex::scoped_lock cfg_lock(cfg_.configMutex());
+    boost::mutex::scoped_lock cfg_lock(_cfg.configMutex());
 
     // Now perform the actual planning
     // bool success = planner_->plan(transformed_plan, &robot_vel_, cfg_.goal_tolerance.free_goal_vel);

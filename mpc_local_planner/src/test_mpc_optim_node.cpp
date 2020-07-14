@@ -54,11 +54,14 @@ class TestMpcOptimNode
     teb_local_planner::ObstContainer _obstacles;
     int _no_fixed_obstacles;
     std::vector<teb_local_planner::PoseSE2> _via_points;
+    mpc_local_planner::MpcConfig _cfg;
 };
 
 void TestMpcOptimNode::start(ros::NodeHandle& nh)
 {
     std::string map_frame = "map";
+
+    _cfg.loadRosParamFromNodeHandle(nh);
 
     // interactive marker server for simulated dynamic obstacles
     interactive_markers::InteractiveMarkerServer marker_server("marker_obstacles");
@@ -94,7 +97,7 @@ void TestMpcOptimNode::start(ros::NodeHandle& nh)
     teb_local_planner::RobotFootprintModelPtr robot_model = mpc_local_planner::MpcLocalPlannerROS::getRobotFootprintFromParamServer(nh);
 
     mpc_local_planner::Controller controller;
-    if (!controller.configure(nh, _obstacles, robot_model, _via_points))
+    if (!controller.configure(nh, _obstacles, robot_model, _via_points, _cfg))
     {
         ROS_ERROR("Controller configuration failed.");
         return;

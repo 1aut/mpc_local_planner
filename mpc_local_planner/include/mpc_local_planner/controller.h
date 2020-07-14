@@ -33,6 +33,8 @@
 
 #include <mpc_local_planner_msgs/StateFeedback.h>
 
+#include <mpc_local_planner/mpc_config.h>
+
 #include <base_local_planner/costmap_model.h>
 
 #include <ros/subscriber.h>
@@ -59,7 +61,7 @@ class Controller : public corbo::PredictiveController
     Controller() = default;
 
     bool configure(ros::NodeHandle& nh, const teb_local_planner::ObstContainer& obstacles, teb_local_planner::RobotFootprintModelPtr robot_model,
-                   const std::vector<teb_local_planner::PoseSE2>& via_points);
+                   const std::vector<teb_local_planner::PoseSE2>& via_points, const MpcConfig& _cfg);
     bool step(const PoseSE2& start, const PoseSE2& goal, const geometry_msgs::Twist& vel, double dt, ros::Time t, corbo::TimeSeries::Ptr u_seq,
               corbo::TimeSeries::Ptr x_seq);
 
@@ -104,10 +106,10 @@ class Controller : public corbo::PredictiveController
     void reset() override;
 
  protected:
-    corbo::DiscretizationGridInterface::Ptr configureGrid(const ros::NodeHandle& nh);
-    RobotDynamicsInterface::Ptr configureRobotDynamics(const ros::NodeHandle& nh);
-    corbo::NlpSolverInterface::Ptr configureSolver(const ros::NodeHandle& nh);
-    corbo::StructuredOptimalControlProblem::Ptr configureOcp(const ros::NodeHandle& nh, const teb_local_planner::ObstContainer& obstacles,
+    corbo::DiscretizationGridInterface::Ptr configureGrid(const ros::NodeHandle& nh, const MpcConfig& _cfg);
+    RobotDynamicsInterface::Ptr configureRobotDynamics(const ros::NodeHandle& nh, const MpcConfig& _cfg);
+    corbo::NlpSolverInterface::Ptr configureSolver(const ros::NodeHandle& nh, const MpcConfig& _cfg);
+    corbo::StructuredOptimalControlProblem::Ptr configureOcp(const ros::NodeHandle& nh, const MpcConfig& _cfg, const teb_local_planner::ObstContainer& obstacles,
                                                              teb_local_planner::RobotFootprintModelPtr robot_model,
                                                              const std::vector<teb_local_planner::PoseSE2>& via_points);
 

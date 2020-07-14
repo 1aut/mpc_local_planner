@@ -57,6 +57,10 @@ find_package(Eigen3 REQUIRED)
 
 find_package(osqp QUIET)
 
+generate_dynamic_reconfigure_options(
+  cfg/MpcLocalPlannerReconfigure.cfg
+)
+
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(EXTERNAL_INCLUDE_DIRS ${EIGEN3_INCLUDE_DIR})
@@ -184,6 +188,7 @@ add_library(mpc_local_planner_optimal_control
 )
 
 add_library(mpc_local_planner
+   src/mpc_config.cpp
    src/controller.cpp
    src/mpc_local_planner_ros.cpp
 )
@@ -191,7 +196,7 @@ add_library(mpc_local_planner
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(test_mpc_optim_node src/test_mpc_optim_node.cpp)
+#add_executable(test_mpc_optim_node src/test_mpc_optim_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -202,6 +207,8 @@ add_executable(test_mpc_optim_node src/test_mpc_optim_node.cpp)
 ## Add cmake target dependencies of the executable
 ## same as for the library above
 # add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+add_dependencies(mpc_local_planner ${PROJECT_NAME}_gencfg)
 
 add_dependencies(mpc_local_planner_utils corbo_core corbo_systems)
 target_link_libraries(mpc_local_planner_utils
@@ -220,10 +227,10 @@ target_link_libraries(mpc_local_planner
   ${catkin_LIBRARIES}
 )
 
- target_link_libraries(test_mpc_optim_node
-   mpc_local_planner
-   ${catkin_LIBRARIES}
- )
+#target_link_libraries(test_mpc_optim_node
+#  mpc_local_planner
+#  ${catkin_LIBRARIES}
+#)
 
 #############
 ## Install ##
@@ -243,9 +250,9 @@ install(PROGRAMS
 install(TARGETS mpc_local_planner mpc_local_planner_utils mpc_local_planner_optimal_control
    LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
-install(TARGETS test_mpc_optim_node
-   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
+#install(TARGETS test_mpc_optim_node
+#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+#)
 
 ## Mark cpp header files for installation
 install(DIRECTORY include/${PROJECT_NAME}/

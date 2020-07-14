@@ -56,36 +56,44 @@
 namespace mpc_local_planner {
 
 bool Controller::configure(ros::NodeHandle& nh, const teb_local_planner::ObstContainer& obstacles,
-                           teb_local_planner::RobotFootprintModelPtr robot_model, const std::vector<teb_local_planner::PoseSE2>& via_points)
+                           teb_local_planner::RobotFootprintModelPtr robot_model, const std::vector<teb_local_planner::PoseSE2>& via_points, const MpcConfig& _cfg)
 {
-    _dynamics = configureRobotDynamics(nh);
+    _dynamics = configureRobotDynamics(nh, _cfg);
     if (!_dynamics) return false;  // we may need state and control dimensions to check other parameters
 
-    _grid   = configureGrid(nh);
-    _solver = configureSolver(nh);
+    _grid   = configureGrid(nh, _cfg);
+    _solver = configureSolver(nh, _cfg);
 
-    _structured_ocp = configureOcp(nh, obstacles, robot_model, via_points);
+    _structured_ocp = configureOcp(nh, _cfg, obstacles, robot_model, via_points);
     _ocp            = _structured_ocp;  // copy pointer also to parent member
 
     int outer_ocp_iterations = 1;
-    nh.param("controller/outer_ocp_iterations", outer_ocp_iterations, outer_ocp_iterations);
+    //nh.param("controller/outer_ocp_iterations", outer_ocp_iterations, outer_ocp_iterations);
+    outer_ocp_iterations = _cfg.controller.outer_ocp_iterations;
     setNumOcpIterations(outer_ocp_iterations);
 
     // further goal opions
-    nh.param("controller/force_reinit_new_goal_dist", _force_reinit_new_goal_dist, _force_reinit_new_goal_dist);
-    nh.param("controller/force_reinit_new_goal_angular", _force_reinit_new_goal_angular, _force_reinit_new_goal_angular);
+    //nh.param("controller/force_reinit_new_goal_dist", _force_reinit_new_goal_dist, _force_reinit_new_goal_dist);
+    _force_reinit_new_goal_dist = _cfg.controller.force_reinit_new_goal_dist;
+    //nh.param("controller/force_reinit_new_goal_angular", _force_reinit_new_goal_angular, _force_reinit_new_goal_angular);
+    _force_reinit_new_goal_angular = _cfg.controller.force_reinit_new_goal_angular;
 
-    nh.param("controller/allow_init_with_backward_motion", _guess_backwards_motion, _guess_backwards_motion);
-    nh.param("controller/force_reinit_num_steps", _force_reinit_num_steps, _force_reinit_num_steps);
+    //nh.param("controller/allow_init_with_backward_motion", _guess_backwards_motion, _guess_backwards_motion);
+    _guess_backwards_motion = _cfg.controller.allow_init_with_backward_motion;
+    //nh.param("controller/force_reinit_num_steps", _force_reinit_num_steps, _force_reinit_num_steps);
+    _force_reinit_num_steps = _cfg.controller.force_reinit_num_steps;
 
     // custom feedback:
-    nh.param("controller/prefer_x_feedback", _prefer_x_feedback, _prefer_x_feedback);
+    //nh.param("controller/prefer_x_feedback", _prefer_x_feedback, _prefer_x_feedback);
+    _prefer_x_feedback = _cfg.controller.prefer_x_feedback;
     _x_feedback_sub = nh.subscribe("state_feedback", 1, &Controller::stateFeedbackCallback, this);
 
     // result publisher:
     _ocp_result_pub = nh.advertise<mpc_local_planner_msgs::OptimalControlResult>("ocp_result", 100);
-    nh.param("controller/publish_ocp_results", _publish_ocp_results, _publish_ocp_results);
-    nh.param("controller/print_cpu_time", _print_cpu_time, _print_cpu_time);
+    //nh.param("controller/publish_ocp_results", _publish_ocp_results, _publish_ocp_results);
+    _publish_ocp_results = _cfg.controller.publish_ocp_results;
+    //nh.param("controller/print_cpu_time", _print_cpu_time, _print_cpu_time);
+    _print_cpu_time = _cfg.controller.print_cpu_time;
 
     setAutoUpdatePreviousControl(false);  // we want to update the previous control value manually
 
@@ -222,42 +230,50 @@ void Controller::publishOptimalControlResult()
 
 void Controller::reset() { PredictiveController::reset(); }
 
-corbo::DiscretizationGridInterface::Ptr Controller::configureGrid(const ros::NodeHandle& nh)
+corbo::DiscretizationGridInterface::Ptr Controller::configureGrid(const ros::NodeHandle& nh, const MpcConfig& _cfg)
 {
     if (!_dynamics) return {};
 
     std::string grid_type = "fd_grid";
-    nh.param("grid/type", grid_type, grid_type);
+    //nh.param("grid/type", grid_type, grid_type);
+    grid_type = _cfg.grid.type;
 
     if (grid_type == "fd_grid")
     {
         FiniteDifferencesGridSE2::Ptr grid;
 
         bool variable_grid = true;
-        nh.param("grid/variable_grid/enable", variable_grid, variable_grid);
+        //nh.param("grid/variable_grid/enable", variable_grid, variable_grid);
+        variable_grid = _cfg.grid.variable_grid.enable;
         if (variable_grid)
         {
             FiniteDifferencesVariableGridSE2::Ptr var_grid = std::make_shared<FiniteDifferencesVariableGridSE2>();
 
             double min_dt = 0.0;
-            nh.param("grid/variable_grid/min_dt", min_dt, min_dt);
+            //nh.param("grid/variable_grid/min_dt", min_dt, min_dt);
+            min_dt = _cfg.grid.variable_grid.min_dt;
             double max_dt = 10.0;
-            nh.param("grid/variable_grid/max_dt", max_dt, max_dt);
+            //nh.param("grid/variable_grid/max_dt", max_dt, max_dt);
+            max_dt = _cfg.grid.variable_grid.max_dt;
             var_grid->setDtBounds(min_dt, max_dt);
 
             bool grid_adaptation = true;
-            nh.param("grid/variable_grid/grid_adaptation/enable", grid_adaptation, grid_adaptation);
+            //nh.param("grid/variable_grid/grid_adaptation/enable", grid_adaptation, grid_adaptation);
+            grid_adaptation = _cfg.grid.variable_grid.grid_adaption.enable;
 
             if (grid_adaptation)
             {
                 int max_grid_size = 50;
-                nh.param("grid/variable_grid/grid_adaptation/max_grid_size", max_grid_size, max_grid_size);
+                //nh.param("grid/variable_grid/grid_adaptation/max_grid_size", max_grid_size, max_grid_size);
+                max_grid_size = _cfg.grid.variable_grid.grid_adaption.max_grid_size;
                 double dt_hyst_ratio = 0.1;
-                nh.param("grid/variable_grid/grid_adaptation/dt_hyst_ratio", dt_hyst_ratio, dt_hyst_ratio);
+                //nh.param("grid/variable_grid/grid_adaptation/dt_hyst_ratio", dt_hyst_ratio, dt_hyst_ratio);
+                dt_hyst_ratio = _cfg.grid.variable_grid.grid_adaption.dt_hyst_ratio;
                 var_grid->setGridAdaptTimeBasedSingleStep(max_grid_size, dt_hyst_ratio, true);
 
                 int min_grid_size = 2;
-                nh.param("grid/variable_grid/grid_adaptation/min_grid_size", min_grid_size, min_grid_size);
+                //nh.param("grid/variable_grid/grid_adaptation/min_grid_size", min_grid_size, min_grid_size);
+                min_grid_size = _cfg.grid.variable_grid.grid_adaption.min_grid_size;
                 var_grid->setNmin(min_grid_size);
             }
             else
@@ -272,15 +288,18 @@ corbo::DiscretizationGridInterface::Ptr Controller::configureGrid(const ros::Nod
         }
         // common grid parameters
         int grid_size_ref = 20;
-        nh.param("grid/grid_size_ref", grid_size_ref, grid_size_ref);
+        //nh.param("grid/grid_size_ref", grid_size_ref, grid_size_ref);
+        grid_size_ref = _cfg.grid.grid_size_ref;
         grid->setNRef(grid_size_ref);
 
         double dt_ref = 0.3;
-        nh.param("grid/dt_ref", dt_ref, dt_ref);
+        //nh.param("grid/dt_ref", dt_ref, dt_ref);
+        dt_ref = _cfg.grid.dt_ref;
         grid->setDtRef(dt_ref);
 
         std::vector<bool> xf_fixed = {true, true, true};
-        nh.param("grid/xf_fixed", xf_fixed, xf_fixed);
+        //nh.param("grid/xf_fixed", xf_fixed, xf_fixed);
+        xf_fixed = _cfg.grid.xf_fixed;
         if ((int)xf_fixed.size() != _dynamics->getStateDimension())
         {
             ROS_ERROR_STREAM("Array size of `xf_fixed` does not match robot state dimension(): " << xf_fixed.size()
@@ -292,11 +311,13 @@ corbo::DiscretizationGridInterface::Ptr Controller::configureGrid(const ros::Nod
         grid->setXfFixed(xf_fixed_eigen);
 
         bool warm_start = true;
-        nh.param("grid/warm_start", warm_start, warm_start);
+        //nh.param("grid/warm_start", warm_start, warm_start);
+        warm_start = _cfg.grid.warm_start;
         grid->setWarmStart(warm_start);
 
         std::string collocation_method = "forward_differences";
-        nh.param("grid/collocation_method", collocation_method, collocation_method);
+        //nh.param("grid/collocation_method", collocation_method, collocation_method);
+        collocation_method = _cfg.grid.collocation_method;
 
         if (collocation_method == "forward_differences")
         {
@@ -316,7 +337,8 @@ corbo::DiscretizationGridInterface::Ptr Controller::configureGrid(const ros::Nod
         }
 
         std::string cost_integration_method = "left_sum";
-        nh.param("grid/cost_integration_method", cost_integration_method, cost_integration_method);
+        //nh.param("grid/cost_integration_method", cost_integration_method, cost_integration_method);
+        cost_integration_method = _cfg.grid.cost_integration_method;
 
         if (cost_integration_method == "left_sum")
         {
@@ -341,10 +363,11 @@ corbo::DiscretizationGridInterface::Ptr Controller::configureGrid(const ros::Nod
     return {};
 }
 
-RobotDynamicsInterface::Ptr Controller::configureRobotDynamics(const ros::NodeHandle& nh)
+RobotDynamicsInterface::Ptr Controller::configureRobotDynamics(const ros::NodeHandle& nh, const MpcConfig& _cfg)
 {
     _robot_type = "unicycle";
-    nh.param("robot/type", _robot_type, _robot_type);
+    //nh.param("robot/type", _robot_type, _robot_type);
+    _robot_type = _cfg.robot.type;
 
     if (_robot_type == "unicycle")
     {
@@ -353,9 +376,11 @@ RobotDynamicsInterface::Ptr Controller::configureRobotDynamics(const ros::NodeHa
     else if (_robot_type == "simple_car")
     {
         double wheelbase = 0.5;
-        nh.param("robot/simple_car/wheelbase", wheelbase, wheelbase);
+        //nh.param("robot/simple_car/wheelbase", wheelbase, wheelbase);
+        wheelbase = _cfg.robot.simple_car.wheelbase;
         bool front_wheel_driving = false;
-        nh.param("robot/simple_car/front_wheel_driving", front_wheel_driving, front_wheel_driving);
+        //nh.param("robot/simple_car/front_wheel_driving", front_wheel_driving, front_wheel_driving);
+        front_wheel_driving = _cfg.robot.simple_car.front_wheel_driving;
         if (front_wheel_driving)
             return std::make_shared<SimpleCarFrontWheelDrivingModel>(wheelbase);
         else
@@ -364,9 +389,11 @@ RobotDynamicsInterface::Ptr Controller::configureRobotDynamics(const ros::NodeHa
     else if (_robot_type == "kinematic_bicycle_vel_input")
     {
         double length_rear = 1.0;
-        nh.param("robot/kinematic_bicycle_vel_input/length_rear", length_rear, length_rear);
+        //nh.param("robot/kinematic_bicycle_vel_input/length_rear", length_rear, length_rear);
+        length_rear = _cfg.robot.kinematic_bicycle_vel_input.length_rear;
         double length_front = 1.0;
-        nh.param("robot/kinematic_bicycle_vel_input/length_front", length_front, length_front);
+        //nh.param("robot/kinematic_bicycle_vel_input/length_front", length_front, length_front);
+        length_front = _cfg.robot.kinematic_bicycle_vel_input.length_front;
         return std::make_shared<KinematicBicycleModelVelocityInput>(length_rear, length_front);
     }
     else
@@ -377,11 +404,12 @@ RobotDynamicsInterface::Ptr Controller::configureRobotDynamics(const ros::NodeHa
     return {};
 }
 
-corbo::NlpSolverInterface::Ptr Controller::configureSolver(const ros::NodeHandle& nh)
+corbo::NlpSolverInterface::Ptr Controller::configureSolver(const ros::NodeHandle& nh, const MpcConfig& _cfg)
 {
 
     std::string solver_type = "ipopt";
-    nh.param("solver/type", solver_type, solver_type);
+    //nh.param("solver/type", solver_type, solver_type);
+    solver_type = _cfg.solver.type;
 
     if (solver_type == "ipopt")
     {
@@ -389,30 +417,35 @@ corbo::NlpSolverInterface::Ptr Controller::configureSolver(const ros::NodeHandle
         solver->initialize();  // requried for setting parameters afterward
 
         int iterations = 100;
-        nh.param("solver/ipopt/iterations", iterations, iterations);
+        //nh.param("solver/ipopt/iterations", iterations, iterations);
+        iterations = _cfg.solver.ipopt.iterations;
         solver->setIterations(iterations);
 
         double max_cpu_time = -1.0;
-        nh.param("solver/ipopt/max_cpu_time", max_cpu_time, max_cpu_time);
+        //nh.param("solver/ipopt/max_cpu_time", max_cpu_time, max_cpu_time);
+        max_cpu_time = _cfg.solver.ipopt.max_cpu_time;
         solver->setMaxCpuTime(max_cpu_time);
 
         // now check for additional ipopt options
         std::map<std::string, double> numeric_options;
-        nh.param("solver/ipopt/ipopt_numeric_options", numeric_options, numeric_options);
+        //nh.param("solver/ipopt/ipopt_numeric_options", numeric_options, numeric_options);
+        numeric_options = _cfg.solver.ipopt.ipopt_numeric_options;
         for (const auto& item : numeric_options)
         {
             if (!solver->setIpoptOptionNumeric(item.first, item.second)) ROS_WARN_STREAM("Ipopt option " << item.first << " could not be set.");
         }
 
         std::map<std::string, std::string> string_options;
-        nh.param("solver/ipopt/ipopt_string_options", string_options, string_options);
+        //nh.param("solver/ipopt/ipopt_string_options", string_options, string_options);
+        string_options = _cfg.solver.ipopt.ipopt_string_options;
         for (const auto& item : string_options)
         {
             if (!solver->setIpoptOptionString(item.first, item.second)) ROS_WARN_STREAM("Ipopt option " << item.first << " could not be set.");
         }
 
         std::map<std::string, int> integer_options;
-        nh.param("solver/ipopt/ipopt_integer_options", integer_options, integer_options);
+        //nh.param("solver/ipopt/ipopt_integer_options", integer_options, integer_options);
+        integer_options = _cfg.solver.ipopt.ipopt_integer_options;
         for (const auto& item : integer_options)
         {
             if (!solver->setIpoptOptionInt(item.first, item.second)) ROS_WARN_STREAM("Ipopt option " << item.first << " could not be set.");
@@ -441,32 +474,42 @@ corbo::NlpSolverInterface::Ptr Controller::configureSolver(const ros::NodeHandle
         corbo::LevenbergMarquardtSparse::Ptr solver = std::make_shared<corbo::LevenbergMarquardtSparse>();
 
         int iterations = 10;
-        nh.param("solver/lsq_lm/iterations", iterations, iterations);
+        //nh.param("solver/lsq_lm/iterations", iterations, iterations);
+        iterations = _cfg.solver.lsq_lm.iterations;
         solver->setIterations(iterations);
 
         double weight_init_eq = 2;
-        nh.param("solver/lsq_lm/weight_init_eq", weight_init_eq, weight_init_eq);
+        //nh.param("solver/lsq_lm/weight_init_eq", weight_init_eq, weight_init_eq);
+        weight_init_eq = _cfg.solver.lsq_lm.weight_init_eq;
         double weight_init_ineq = 2;
-        nh.param("solver/lsq_lm/weight_init_ineq", weight_init_ineq, weight_init_ineq);
+        //nh.param("solver/lsq_lm/weight_init_ineq", weight_init_ineq, weight_init_ineq);
+        weight_init_ineq = _cfg.solver.lsq_lm.weight_init_ineq;
         double weight_init_bounds = 2;
-        nh.param("solver/lsq_lm/weight_init_bounds", weight_init_bounds, weight_init_bounds);
+        //nh.param("solver/lsq_lm/weight_init_bounds", weight_init_bounds, weight_init_bounds);
+        weight_init_bounds = _cfg.solver.lsq_lm.weight_init_bounds;
 
         solver->setPenaltyWeights(weight_init_eq, weight_init_ineq, weight_init_bounds);
 
         double weight_adapt_factor_eq = 1;
-        nh.param("solver/lsq_lm/weight_adapt_factor_eq", weight_adapt_factor_eq, weight_adapt_factor_eq);
+        //nh.param("solver/lsq_lm/weight_adapt_factor_eq", weight_adapt_factor_eq, weight_adapt_factor_eq);
+        weight_adapt_factor_eq = _cfg.solver.lsq_lm.weight_adapt_factor_eq;
         double weight_adapt_factor_ineq = 1;
-        nh.param("solver/lsq_lm/weight_adapt_factor_ineq", weight_adapt_factor_ineq, weight_adapt_factor_ineq);
+        //nh.param("solver/lsq_lm/weight_adapt_factor_ineq", weight_adapt_factor_ineq, weight_adapt_factor_ineq);
+        weight_adapt_factor_ineq = _cfg.solver.lsq_lm.weight_adapt_factor_ineq;
         double weight_adapt_factor_bounds = 1;
-        nh.param("solver/lsq_lm/weight_adapt_factor_bounds", weight_adapt_factor_bounds, weight_adapt_factor_bounds);
+        //nh.param("solver/lsq_lm/weight_adapt_factor_bounds", weight_adapt_factor_bounds, weight_adapt_factor_bounds);
+        weight_adapt_factor_bounds = _cfg.solver.lsq_lm.weight_adapt_factor_bounds;
 
         double weight_adapt_max_eq = 500;
-        nh.param("solver/lsq_lm/weight_adapt_max_eq", weight_adapt_max_eq, weight_adapt_max_eq);
+        //nh.param("solver/lsq_lm/weight_adapt_max_eq", weight_adapt_max_eq, weight_adapt_max_eq);
+        weight_adapt_max_eq = _cfg.solver.lsq_lm.weight_adapt_max_eq;
         double weight_adapt_max_ineq = 500;
-        nh.param("solver/lsq_lm/weight_init_eq", weight_adapt_max_ineq, weight_adapt_max_ineq);
+        //nh.param("solver/lsq_lm/weight_init_eq", weight_adapt_max_ineq, weight_adapt_max_ineq);
+        weight_adapt_max_ineq = _cfg.solver.lsq_lm.weight_adapt_max_ineq;
         double weight_adapt_max_bounds = 500;
-        nh.param("solver/lsq_lm/weight_adapt_max_bounds", weight_adapt_max_bounds, weight_adapt_max_bounds);
-
+        //nh.param("solver/lsq_lm/weight_adapt_max_bounds", weight_adapt_max_bounds, weight_adapt_max_bounds);
+        weight_adapt_max_bounds = _cfg.solver.lsq_lm.weight_adapt_max_bounds;               
+ 
         solver->setWeightAdapation(weight_adapt_factor_eq, weight_adapt_factor_ineq, weight_adapt_factor_bounds, weight_adapt_max_eq,
                                    weight_adapt_max_ineq, weight_adapt_max_bounds);
 
@@ -480,7 +523,7 @@ corbo::NlpSolverInterface::Ptr Controller::configureSolver(const ros::NodeHandle
     return {};
 }
 
-corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::NodeHandle& nh, const teb_local_planner::ObstContainer& obstacles,
+corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::NodeHandle& nh, const MpcConfig& _cfg, const teb_local_planner::ObstContainer& obstacles,
                                                                      teb_local_planner::RobotFootprintModelPtr robot_model,
                                                                      const std::vector<teb_local_planner::PoseSE2>& via_points)
 {
@@ -494,16 +537,19 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     if (_robot_type == "unicycle")
     {
         double max_vel_x = 0.4;
-        nh.param("robot/unicycle/max_vel_x", max_vel_x, max_vel_x);
+        //nh.param("robot/unicycle/max_vel_x", max_vel_x, max_vel_x);
+        max_vel_x = _cfg.robot.unicycle.max_vel_x;
         double max_vel_x_backwards = 0.2;
-        nh.param("robot/unicycle/max_vel_x_backwards", max_vel_x_backwards, max_vel_x_backwards);
+        //nh.param("robot/unicycle/max_vel_x_backwards", max_vel_x_backwards, max_vel_x_backwards);
+        max_vel_x_backwards = _cfg.robot.unicycle.max_vel_x_backwards;
         if (max_vel_x_backwards < 0)
         {
             ROS_WARN("max_vel_x_backwards must be >= 0");
             max_vel_x_backwards *= -1;
         }
         double max_vel_theta = 0.3;
-        nh.param("robot/unicycle/max_vel_theta", max_vel_theta, max_vel_theta);
+        //nh.param("robot/unicycle/max_vel_theta", max_vel_theta, max_vel_theta);
+        max_vel_theta = _cfg.robot.unicycle.max_vel_theta;
 
         // ocp->setBounds(Eigen::Vector3d(-corbo::CORBO_INF_DBL, -corbo::CORBO_INF_DBL, -corbo::CORBO_INF_DBL),
         //               Eigen::Vector3d(corbo::CORBO_INF_DBL, corbo::CORBO_INF_DBL, corbo::CORBO_INF_DBL),
@@ -513,32 +559,38 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     else if (_robot_type == "simple_car")
     {
         double max_vel_x = 0.4;
-        nh.param("robot/simple_car/max_vel_x", max_vel_x, max_vel_x);
+        //nh.param("robot/simple_car/max_vel_x", max_vel_x, max_vel_x);
+        max_vel_x = _cfg.robot.simple_car.max_vel_x;
         double max_vel_x_backwards = 0.2;
-        nh.param("robot/simple_car/max_vel_x_backwards", max_vel_x_backwards, max_vel_x_backwards);
+        //nh.param("robot/simple_car/max_vel_x_backwards", max_vel_x_backwards, max_vel_x_backwards);
+        max_vel_x_backwards = _cfg.robot.simple_car.max_vel_x_backwards;
         if (max_vel_x_backwards < 0)
         {
             ROS_WARN("max_vel_x_backwards must be >= 0");
             max_vel_x_backwards *= -1;
         }
         double max_steering_angle = 1.5;
-        nh.param("robot/simple_car/max_steering_angle", max_steering_angle, max_steering_angle);
+        //nh.param("robot/simple_car/max_steering_angle", max_steering_angle, max_steering_angle);
+        max_steering_angle = _cfg.robot.simple_car.max_steering_angle;
 
         ocp->setControlBounds(Eigen::Vector2d(-max_vel_x_backwards, -max_steering_angle), Eigen::Vector2d(max_vel_x, max_steering_angle));
     }
     else if (_robot_type == "kinematic_bicycle_vel_input")
     {
         double max_vel_x = 0.4;
-        nh.param("robot/kinematic_bicycle_vel_input/max_vel_x", max_vel_x, max_vel_x);
+        //nh.param("robot/kinematic_bicycle_vel_input/max_vel_x", max_vel_x, max_vel_x);
+        max_vel_x = _cfg.robot.kinematic_bicycle_vel_input.max_vel_x;
         double max_vel_x_backwards = 0.2;
-        nh.param("robot/kinematic_bicycle_vel_input/max_vel_x_backwards", max_vel_x_backwards, max_vel_x_backwards);
+        //nh.param("robot/kinematic_bicycle_vel_input/max_vel_x_backwards", max_vel_x_backwards, max_vel_x_backwards);
+        max_vel_x_backwards = _cfg.robot.kinematic_bicycle_vel_input.max_vel_x_backwards;
         if (max_vel_x_backwards < 0)
         {
             ROS_WARN("max_vel_x_backwards must be >= 0");
             max_vel_x_backwards *= -1;
         }
         double max_steering_angle = 1.5;
-        nh.param("robot/kinematic_bicycle_vel_input/max_steering_angle", max_steering_angle, max_steering_angle);
+        //nh.param("robot/kinematic_bicycle_vel_input/max_steering_angle", max_steering_angle, max_steering_angle);
+        max_steering_angle = _cfg.robot.kinematic_bicycle_vel_input.max_steering_angle;
 
         ocp->setControlBounds(Eigen::Vector2d(-max_vel_x_backwards, -max_steering_angle), Eigen::Vector2d(max_vel_x, max_steering_angle));
     }
@@ -549,7 +601,8 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     }
 
     std::string objective_type = "minimum_time";
-    nh.param("planning/objective/type", objective_type, objective_type);
+    //nh.param("planning/objective/type", objective_type, objective_type);
+    objective_type = _cfg.planning.objective.type;
     bool lsq_solver = _solver->isLsqSolver();
 
     if (objective_type == "minimum_time")
@@ -559,7 +612,8 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     else if (objective_type == "quadratic_form")
     {
         std::vector<double> state_weights;
-        nh.param("planning/objective/quadratic_form/state_weights", state_weights, state_weights);
+        //nh.param("planning/objective/quadratic_form/state_weights", state_weights, state_weights);
+        state_weights = _cfg.planning.objective.quadratic_form.state_weights;
         Eigen::MatrixXd Q;
         if (state_weights.size() == x_dim)
         {
@@ -575,7 +629,8 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
             return {};
         }
         std::vector<double> control_weights;
-        nh.param("planning/objective/quadratic_form/control_weights", control_weights, control_weights);
+        //nh.param("planning/objective/quadratic_form/control_weights", control_weights, control_weights);
+        control_weights = _cfg.planning.objective.quadratic_form.control_weights;
         Eigen::MatrixXd R;
         if (control_weights.size() == u_dim)
         {
@@ -591,10 +646,12 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
             return {};
         }
         bool integral_form = false;
-        nh.param("planning/objective/quadratic_form/integral_form", integral_form, integral_form);
+        //nh.param("planning/objective/quadratic_form/integral_form", integral_form, integral_form);
+        _cfg.planning.objective.quadratic_form.integral_form;
         bool hybrid_cost_minimum_time = false;
-        nh.param("planning/objective/quadratic_form/hybrid_cost_minimum_time", hybrid_cost_minimum_time, hybrid_cost_minimum_time);
-
+        //nh.param("planning/objective/quadratic_form/hybrid_cost_minimum_time", hybrid_cost_minimum_time, hybrid_cost_minimum_time);
+        _cfg.planning.objective.quadratic_form.hybrid_cost_minimum_time;
+ 
         bool q_zero = Q.isZero();
         bool r_zero = R.isZero();
         if (!q_zero && !r_zero)
@@ -626,11 +683,14 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     else if (objective_type == "minimum_time_via_points")
     {
         bool via_points_ordered = false;
-        nh.param("planning/objective/minimum_time_via_points/via_points_ordered", via_points_ordered, via_points_ordered);
+        //nh.param("planning/objective/minimum_time_via_points/via_points_ordered", via_points_ordered, via_points_ordered);
+        via_points_ordered = _cfg.planning.objective.minimum_time_via_points.via_points_ordered;
         double position_weight = 1.0;
-        nh.param("planning/objective/minimum_time_via_points/position_weight", position_weight, position_weight);
+        //nh.param("planning/objective/minimum_time_via_points/position_weight", position_weight, position_weight);
+        position_weight = _cfg.planning.objective.minimum_time_via_points.position_weight;
         double orientation_weight = 0.0;
-        nh.param("planning/objective/minimum_time_via_points/orientation_weight", orientation_weight, orientation_weight);
+        //nh.param("planning/objective/minimum_time_via_points/orientation_weight", orientation_weight, orientation_weight);
+        orientation_weight = _cfg.planning.objective.minimum_time_via_points.orientation_weight;
         ocp->setStageCost(std::make_shared<MinTimeViaPointsCost>(via_points, position_weight, orientation_weight, via_points_ordered));
         // TODO(roesmann): lsq version
     }
@@ -641,7 +701,8 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     }
 
     std::string terminal_cost = "none";
-    nh.param("planning/terminal_cost/type", terminal_cost, terminal_cost);
+    //nh.param("planning/terminal_cost/type", terminal_cost, terminal_cost);
+    terminal_cost = _cfg.planning.terminal_cost.type;
 
     if (terminal_cost == "none")
     {
@@ -650,7 +711,8 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     else if (terminal_cost == "quadratic")
     {
         std::vector<double> state_weights;
-        nh.param("planning/terminal_cost/quadratic/final_state_weights", state_weights, state_weights);
+        //nh.param("planning/terminal_cost/quadratic/final_state_weights", state_weights, state_weights);
+        state_weights = _cfg.planning.terminal_cost.quadratic.final_state_weights;
         Eigen::MatrixXd Qf;
         if (state_weights.size() == x_dim)
         {
@@ -674,7 +736,8 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     }
 
     std::string terminal_constraint = "none";
-    nh.param("planning/terminal_constraint/type", terminal_constraint, terminal_constraint);
+    //nh.param("planning/terminal_constraint/type", terminal_constraint, terminal_constraint);
+    terminal_constraint = _cfg.planning.terminal_constraint.type;
 
     if (terminal_constraint == "none")
     {
@@ -683,7 +746,8 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     else if (terminal_constraint == "l2_ball")
     {
         std::vector<double> weight_matrix;
-        nh.param("planning/terminal_constraint/l2_ball/weight_matrix", weight_matrix, weight_matrix);
+        //nh.param("planning/terminal_constraint/l2_ball/weight_matrix", weight_matrix, weight_matrix);
+        weight_matrix = _cfg.planning.terminal_constraint.l2_ball.weight_matrix;
         Eigen::MatrixXd S;
         if (weight_matrix.size() == x_dim)
         {
@@ -699,7 +763,8 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
             return {};
         }
         double radius = 1.0;
-        nh.param("planning/terminal_constraint/l2_ball/radius", radius, radius);
+        //nh.param("planning/terminal_constraint/l2_ball/radius", radius, radius);
+        radius = _cfg.planning.terminal_constraint.l2_ball.radius;
         ocp->setFinalStageConstraint(std::make_shared<TerminalBallSE2>(S, radius));
     }
     else
@@ -715,17 +780,21 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     // configure collision avoidance
 
     double min_obstacle_dist = 0.5;
-    nh.param("collision_avoidance/min_obstacle_dist", min_obstacle_dist, min_obstacle_dist);
+    //nh.param("collision_avoidance/min_obstacle_dist", min_obstacle_dist, min_obstacle_dist);
+    min_obstacle_dist = _cfg.collision_avoidance.min_obstacle_dist;
     _inequality_constraint->setMinimumDistance(min_obstacle_dist);
 
     bool enable_dynamic_obstacles = false;
-    nh.param("collision_avoidance/enable_dynamic_obstacles", enable_dynamic_obstacles, enable_dynamic_obstacles);
+    //nh.param("collision_avoidance/enable_dynamic_obstacles", enable_dynamic_obstacles, enable_dynamic_obstacles);
+    enable_dynamic_obstacles = _cfg.collision_avoidance.enable_dynamic_obstacles;
     _inequality_constraint->setEnableDynamicObstacles(enable_dynamic_obstacles);
 
     double force_inclusion_dist = 0.5;
-    nh.param("collision_avoidance/force_inclusion_dist", force_inclusion_dist, force_inclusion_dist);
+    //nh.param("collision_avoidance/force_inclusion_dist", force_inclusion_dist, force_inclusion_dist);
+    force_inclusion_dist = _cfg.collision_avoidance.force_inclusion_dist;
     double cutoff_dist = 2;
-    nh.param("collision_avoidance/cutoff_dist", cutoff_dist, cutoff_dist);
+    //nh.param("collision_avoidance/cutoff_dist", cutoff_dist, cutoff_dist);
+    cutoff_dist = _cfg.collision_avoidance.cutoff_dist;
     _inequality_constraint->setObstacleFilterParameters(force_inclusion_dist, cutoff_dist);
 
     // configure control deviation bounds
@@ -733,16 +802,19 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     if (_robot_type == "unicycle")
     {
         double acc_lim_x = 0.0;
-        nh.param("robot/unicycle/acc_lim_x", acc_lim_x, acc_lim_x);
+        //nh.param("robot/unicycle/acc_lim_x", acc_lim_x, acc_lim_x);
+        acc_lim_x = _cfg.robot.unicycle.acc_lim_x;
         double dec_lim_x = 0.0;
-        nh.param("robot/unicycle/dec_lim_x", dec_lim_x, dec_lim_x);
+        //nh.param("robot/unicycle/dec_lim_x", dec_lim_x, dec_lim_x);
+        dec_lim_x = _cfg.robot.unicycle.dec_lim_x;
         if (dec_lim_x < 0)
         {
             ROS_WARN("dec_lim_x must be >= 0");
             dec_lim_x *= -1;
         }
         double acc_lim_theta = 0.0;
-        nh.param("robot/unicycle/acc_lim_theta", acc_lim_theta, acc_lim_theta);
+        //nh.param("robot/unicycle/acc_lim_theta", acc_lim_theta, acc_lim_theta);
+        acc_lim_theta = _cfg.robot.unicycle.acc_lim_theta;
 
         if (acc_lim_x <= 0) acc_lim_x = corbo::CORBO_INF_DBL;
         if (dec_lim_x <= 0) dec_lim_x = corbo::CORBO_INF_DBL;
@@ -754,16 +826,19 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     else if (_robot_type == "simple_car")
     {
         double acc_lim_x = 0.0;
-        nh.param("robot/simple_car/acc_lim_x", acc_lim_x, acc_lim_x);
+        //nh.param("robot/simple_car/acc_lim_x", acc_lim_x, acc_lim_x);
+        acc_lim_x = _cfg.robot.simple_car.acc_lim_x;
         double dec_lim_x = 0.0;
-        nh.param("robot/simple_car/dec_lim_x", dec_lim_x, dec_lim_x);
+        //nh.param("robot/simple_car/dec_lim_x", dec_lim_x, dec_lim_x);
+        dec_lim_x = _cfg.robot.simple_car.dec_lim_x;
         if (dec_lim_x < 0)
         {
             ROS_WARN("dec_lim_x must be >= 0");
             dec_lim_x *= -1;
         }
         double max_steering_rate = 0.0;
-        nh.param("robot/simple_car/max_steering_rate", max_steering_rate, max_steering_rate);
+        //nh.param("robot/simple_car/max_steering_rate", max_steering_rate, max_steering_rate);
+        max_steering_rate = _cfg.robot.simple_car.max_steering_rate;
 
         if (acc_lim_x <= 0) acc_lim_x = corbo::CORBO_INF_DBL;
         if (dec_lim_x <= 0) dec_lim_x = corbo::CORBO_INF_DBL;
@@ -775,16 +850,19 @@ corbo::StructuredOptimalControlProblem::Ptr Controller::configureOcp(const ros::
     else if (_robot_type == "kinematic_bicycle_vel_input")
     {
         double acc_lim_x = 0.0;
-        nh.param("robot/kinematic_bicycle_vel_input/acc_lim_x", acc_lim_x, acc_lim_x);
+        //nh.param("robot/kinematic_bicycle_vel_input/acc_lim_x", acc_lim_x, acc_lim_x);
+        acc_lim_x = _cfg.robot.kinematic_bicycle_vel_input.acc_lim_x;
         double dec_lim_x = 0.0;
-        nh.param("robot/kinematic_bicycle_vel_input/dec_lim_x", dec_lim_x, dec_lim_x);
+        //nh.param("robot/kinematic_bicycle_vel_input/dec_lim_x", dec_lim_x, dec_lim_x);
+        dec_lim_x = _cfg.robot.kinematic_bicycle_vel_input.dec_lim_x;
         if (dec_lim_x < 0)
         {
             ROS_WARN("dec_lim_x must be >= 0");
             dec_lim_x *= -1;
         }
         double max_steering_rate = 0.0;
-        nh.param("robot/kinematic_bicycle_vel_input/max_steering_rate", max_steering_rate, max_steering_rate);
+        //nh.param("robot/kinematic_bicycle_vel_input/max_steering_rate", max_steering_rate, max_steering_rate);
+        max_steering_rate = _cfg.robot.kinematic_bicycle_vel_input.max_steering_rate;
 
         if (acc_lim_x <= 0) acc_lim_x = corbo::CORBO_INF_DBL;
         if (dec_lim_x <= 0) dec_lim_x = corbo::CORBO_INF_DBL;
